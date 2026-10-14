@@ -56,7 +56,8 @@ public sealed partial class ProductData : IReadOnlyDictionary<string, ProductInf
     /// <summary>Parses the hotel's <c>productdata_json</c> document.</summary>
     /// <remarks>
     /// A numeric product code is kept as its JSON text. When a code appears more than once, the
-    /// last entry wins.
+    /// last entry wins. A name or description that is not a JSON string is read leniently: numbers
+    /// and booleans keep their JSON text, and objects or arrays are treated as empty.
     /// </remarks>
     /// <param name="json">The JSON document.</param>
     /// <returns>The parsed product data.</returns>
@@ -107,8 +108,13 @@ public sealed partial class ProductData : IReadOnlyDictionary<string, ProductInf
         [JsonConverter(typeof(StringValueJsonConverter))]
         public string? Code { get; set; }
 
-        [JsonPropertyName("name")] public string? Name { get; set; }
-        [JsonPropertyName("description")] public string? Description { get; set; }
+        [JsonPropertyName("name")]
+        [JsonConverter(typeof(LenientStringJsonConverter))]
+        public string? Name { get; set; }
+
+        [JsonPropertyName("description")]
+        [JsonConverter(typeof(LenientStringJsonConverter))]
+        public string? Description { get; set; }
     }
 
     private sealed class StringValueJsonConverter : JsonConverter<string>
@@ -129,6 +135,38 @@ public sealed partial class ProductData : IReadOnlyDictionary<string, ProductInf
             using JsonDocument document = JsonDocument.ParseValue(ref reader);
             return document.RootElement.GetRawText();
         }
+    }
+
+    /// <summary>
+    /// Reads a text field that some hotels fill with a non-string value. Strings are read as is,
+    /// numbers and booleans keep their JSON text, and objects or arrays are skipped and read as empty.
+    /// </summary>
+    private sealed class LenientStringJsonConverter : JsonConverter<string>
+    {
+        public override string Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options)
+        {
+            switch (reader.TokenType)
+            {
+                case JsonTokenType.String:
+                    return reader.GetString() ?? "";
+                case JsonTokenType.Number:
+                    using (JsonDocument document = JsonDocument.ParseValue(ref reader))
+                        return document.RootElement.GetRawText();
+                case JsonTokenType.True:
+                    return "true";
+                case JsonTokenType.False:
+                    return "false";
+                case JsonTokenType.StartObject:
+                case JsonTokenType.StartArray:
+                    reader.Skip();
+                    return "";
+                default:
+                    return "";
+            }
+        }
+
+        public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options) =>
+            writer.WriteStringValue(value);
     }
 
     [JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true)]
